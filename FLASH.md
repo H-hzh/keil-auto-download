@@ -1,13 +1,19 @@
-# md32 命令行：编译 → 设定型号 → 烧录 → 复位（默认不读串口）
+# md32 命令行：编译 → 烧录（默认全烧 Boot+App）→ 复位（默认不读串口）
 
 一条命令跑完整个下载流程，不用打开 Keil 界面。
+**默认行为 = 全烧**：把 0 区 Boot 和 App 一起合并后，经 PWLINK2/CMSIS-DAP 下载器全片擦除+烧录。
+加 `--app`（Git Bash 用 `app`）退回旧的"只烧应用区"模式。
 
 | 文件 | 说明 |
 |---|---|
 | `flash_md32.py` | 主程序：解析工程 → 设定型号 → 编译 → 烧录 → 复位（`--verify` 才做串口校验）|
 | `flash_cli.bat` | cmd / 双击用启动器 |
-| `flash_cli.sh` | Git Bash / MSYS2 用启动器 |
+| `flash_cli.sh` | Git Bash / MSYS2 用启动器（把字面量 `app` 自动翻成 `--app`）|
 | `dap_reset.py` | 通过 CMSIS-DAP v2 复位目标（绕过 uVision -f 不复位）；被主脚本自动调用 |
+| `make_combined.py` | 合并 0 区 Boot + App 成 `Objects/combined.{hex,bin}`；被主脚本在全烧模式下自动调用 |
+| `patch_app_layout.py` | 改应用的 IROM/VTOR/0x05 请求升级开关（`--apply` 应用 / `--restore` 回滚，带 `.bak_bootA` 备份）|
+| `add_chip.py` | 新芯片标定一条龙：CSV → 算系数 → 写 `adc_uid_calibration.h` → 加 xlsx 页 → 烧录（`--uid/--csv`，`--dry-run` 只算不改，`--no-flash` 跳烧）|
+| `addr_tool.py` / `addr_tool.bat` / `addr_tool.sh` | 485 改地址 / 读写参数区 / OTA 升级（`ota` / `install-updater` 子命令）|
 | `last_project.txt` | 自动生成，记录上次用的工程（可删） |
 
 ## 前置条件（一次配好，长期有效）
@@ -49,6 +55,9 @@ cd /d/code/keil/脚本/md32
 把 `D:\code\keil\脚本\md32` 加进 PATH 后，cmd 里直接敲 `flash_cli` 即可。
 `.bat` / `.sh` 都只是 `flash_md32.py` 的启动器，参数原样透传。
 
+> **烧录范围**：默认是**全烧**（Boot+App 一起经下载器全片擦除+烧录）；
+> 只想更新应用、保留参数区，用 `./flash_cli.sh app`（Git Bash）或 `flash_md32.py --app`（cmd / 直接调 .py）。
+
 ### 记住上次工程
 
 - 只要**显式传了工程**（目录或 `.uvprojx`），就写进脚本目录的 `last_project.txt`；
@@ -64,6 +73,7 @@ cd /d/code/keil/脚本/md32
 | `--chip` | 设定 `<Device>`，默认沿用工程里的（当前 `GD32F303CC`）<br>只改型号字段，**Flash 算法/启动文件/宏要自己核对** |
 | `--serial` / `--baud` | 运行校验用串口，默认 `COM10` / `115200` |
 | `--no-build` | 跳过编译直接烧 |
+| `--app` | 退回旧"应用模式"：只编译并用 UV4(-f) 烧录应用区（经 DAP 探头，BOOT0 低）。<br>**默认是全烧**：编译 md32 → 编译 0 区 Boot → 合并成 `Objects/combined` → 生成 merged 工程经 PWLINK2/CMSIS-DAP 下载器全片擦除+烧录 |
 | `--build-only` / `--no-flash` | 只编译 |
 | `--verify-only` | 不编译不烧录，只做复位+串口校验 |
 | `--verify` | 烧完额外做串口运行校验（默认不做，只复位） |
