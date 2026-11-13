@@ -94,12 +94,36 @@ cd /d/code/keil/脚本/md32
 
 ## 内部做了什么
 
-1. `UV4 -b <prj> -j0 -o _uv4_build.log` → 解析 `N Error(s), M Warning(s)`
-2. `UV4 -f <prj> -j0 -o _uv4_flash.log` → 日志必须同时出现 `Programming Done` 和 `Verify OK`
-3. 打开串口判定目标是否已在运行；没数据就 DTR / RTS 脉冲各试一次
-   （若串口被 seriportTest 的服务占着，自动改用 `http://127.0.0.1:8766` 读帧，不用抢端口）
-4. 还没有数据 → 提示按复位键，并等 `--wait` 秒；期间检测到 `AA AA AA A1` 温度帧即继续
-5. 采 3 秒温度帧，打印 a~h 八路温度
+### 默认（全烧 Boot+App）
+
+1. `UV4 -b <prj>` 编译应用（md32），解析 `N Error(s), M Warning(s)`
+2. 若工程里有 `bootloader/build_boot.py`，先用 armcc(AC5) 重新编译 0 区 Boot → `bootloader/build/boot.bin`
+3. `make_combined.py --boot boot.bin --app Objects/md32.hex --out Objects` → 合并出 `Objects/combined.{hex,bin}`
+4. 基于 uvprojx 生成临时 **merged 工程**（`combined_flash.uvprojx` + `combined_flash.s` + `combined_flash.sct`），
+   用 INCBIN 把 `combined.bin` 拼到 `0x08000000` 覆盖整片 256KB（同时去掉 RTE，避免 DFP 外设源被编进镜像）
+5. `UV4 -b combined` 出 `combined.axf` → `UV4 -f combined` 经 PWLINK2/CMSIS-DAP **全片擦除+烧录**，
+   日志必须同时出现 `Programming Done` 和 `Verify OK`
+6. `dap_reset.py` 发 SYSRESETREQ 复位（默认不读串口；要校验加 `--verify`）
+
+> ⚠ 全片擦除会清掉 **FLAG 和 PARAM 区**：多片板子地址会变回 1，校准也被清。
+> 烧完请用上位机（`addr_tool.py`）重新设地址、必要时重烧标定。详见下方"全片擦除副作用"。
+
+### `--app`（旧应用模式，只烧应用区）
+
+1. `UV4 -b <prj>` 编译应用
+2. `UV4 -f <prj>` 只把应用烧进 `0x08004000`（需 DAP 探头、BOOT0 低），日志需 `Programming Done` + `Verify OK`
+3. `dap_reset.py` 复位；若带 `--verify`，烧完读 3 秒温度帧确认 a~h 八路有数据
+   （串口被 seriportTest 的服务占着时，自动走 `http://127.0.0.1:8766` 的 HTTP 接口读帧，不用抢端口）
+
+## 全片擦除副作用（全烧模式）
+
+全烧走的是 `UV4 -f` 对整片 256KB 的擦除+编程，**FLAG 和 PARAM 区一并被清掉**：
+
+- **地址**：多片板子的从机地址会变回 `1`（PARAM 区首字节）。
+- **校准**：参数区里的标定值同样被清，烧完需重新标定 / 写入。
+
+脚本烧完会打印这条警告，但仍会继续完成复位。这是全片烧录的物理副作用，无法避免——
+想保留参数区就改用 `--app`（只擦应用区），或接受烧完用 `addr_tool.py` 重设一次。
 
 ## 关于"复位"（已自动化）
 
